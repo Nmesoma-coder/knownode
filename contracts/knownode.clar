@@ -5,6 +5,7 @@
 (define-constant contract-owner tx-sender)
 (define-constant min-assessors u3)
 (define-constant assessment-threshold u70)  ;; 70% approval needed
+(define-constant max-assessors u20)  ;; Maximum number of assessors per skill
 
 ;; Error codes
 (define-constant err-not-authorized (err u100))
@@ -12,6 +13,8 @@
 (define-constant err-not-registered (err u102))
 (define-constant err-insufficient-assessors (err u103))
 (define-constant err-already-assessed (err u104))
+(define-constant err-max-assessors-reached (err u105))
+(define-constant err-invalid-score (err u106))
 
 ;; Data Maps
 (define-map users 
@@ -63,6 +66,7 @@
 (define-public (add-skill (name (string-ascii 50)) (description (string-ascii 200)) (required-assessments uint))
     (let ((skill-id (get-next-skill-id)))
         (asserts! (is-eq tx-sender contract-owner) err-not-authorized)
+        (asserts! (<= required-assessments max-assessors) err-invalid-score)
         (ok (map-set skills 
             skill-id
             {
@@ -95,19 +99,61 @@
     (let (
         (sender tx-sender)
         (assessment (unwrap! (map-get? skill-assessments {skill-id: skill-id, user: user}) err-not-registered))
+        (current-assessors (get assessors assessment))
+        (current-scores (get scores assessment))
         )
+        ;; Basic checks
         (asserts! (default-to false (get registered (map-get? users sender))) err-not-registered)
         (asserts! (not (is-eq sender user)) err-not-authorized)
-        (asserts! (< score u101) (err u105))  ;; Score must be 0-100
-        (asserts! (not (is-some (index-of (get assessors assessment) sender))) err-already-assessed)
+        (asserts! (< score u101) err-invalid-score)
+        (asserts! (not (is-some (index-of current-assessors sender))) err-already-assessed)
         
-        (ok (map-set skill-assessments
-            {skill-id: skill-id, user: user}
-            (merge assessment {
-                assessors: (append (get assessors assessment) sender),
-                scores: (append (get scores assessment) score)
-            })
-        ))
+        ;; Check if we've reached maximum assessors
+        (asserts! (< (len current-assessors) u20) err-max-assessors-reached)
+        
+        ;; Create new assessors and scores lists
+        (let (
+            (new-assessors (unwrap! (as-max-len? (concat current-assessors (list sender)) u20) err-max-assessors-reached))
+            (new-scores (unwrap! (as-max-len? (concat current-scores (list score)) u20) err-max-assessors-reached))
+        )
+            ;; Update assessment
+            (ok (map-set skill-assessments
+                {skill-id: skill-id, user: user}
+                (merge assessment {
+                    assessors: new-assessors,
+                    scores: new-scores
+                })
+            ))
+        )
+    )
+)
+
+;; Finalize skill verification
+(define-public (finalize-verification (skill-id uint))
+    (let (
+        (sender tx-sender)
+        (assessment (unwrap! (map-get? skill-assessments {skill-id: skill-id, user: sender}) err-not-registered))
+        (scores (get scores assessment))
+        (assessor-count (len (get assessors assessment)))
+        )
+        
+        ;; Check if minimum assessors requirement is met
+        (asserts! (>= assessor-count min-assessors) err-insufficient-assessors)
+        
+        ;; Calculate average score
+        (let (
+            (total-score (fold + scores u0))
+            (average-score (/ total-score assessor-count))
+            )
+            
+            ;; Update assessment status if threshold is met
+            (ok (map-set skill-assessments
+                {skill-id: skill-id, user: sender}
+                (merge assessment {
+                    verified: (>= average-score assessment-threshold)
+                })
+            ))
+        )
     )
 )
 
@@ -126,6 +172,11 @@
 ;; Get assessment details
 (define-read-only (get-assessment-details (skill-id uint) (user principal))
     (map-get? skill-assessments {skill-id: skill-id, user: user})
+)
+
+;; Get current assessor count for a skill assessment
+(define-read-only (get-assessor-count (skill-id uint) (user principal))
+    (len (get assessors (unwrap! (map-get? skill-assessments {skill-id: skill-id, user: user}) u0)))
 )
 
 ;; Private functions
