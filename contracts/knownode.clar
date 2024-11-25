@@ -75,10 +75,41 @@
     )
 )
 
-(define-private (is-valid-string (str (string-ascii 200)))
+(define-private (is-valid-string-200 (str (string-ascii 200)))
     (and 
         (not (is-eq str ""))
         (<= (len str) u200)
+    )
+)
+
+(define-private (is-valid-string-50 (str (string-ascii 50)))
+    (and 
+        (not (is-eq str ""))
+        (<= (len str) u50)
+    )
+)
+
+(define-private (is-valid-name (str (string-ascii 50)))
+    (and 
+        (not (is-eq str ""))
+        (<= (len str) u50)
+        ;; Add any additional name-specific validation rules here
+    )
+)
+
+(define-private (is-valid-category (str (string-ascii 50)))
+    (and 
+        (not (is-eq str ""))
+        (<= (len str) u50)
+        ;; Add any additional category-specific validation rules here
+    )
+)
+
+(define-private (is-valid-description (str (string-ascii 200)))
+    (and 
+        (not (is-eq str ""))
+        (<= (len str) u200)
+        ;; Add any additional description-specific validation rules here
     )
 )
 
@@ -220,7 +251,9 @@
     (let ((skill-id (get-next-skill-id)))
         ;; Input validation
         (asserts! (is-eq tx-sender contract-owner) err-not-authorized)
-        (asserts! (is-valid-string description) err-invalid-input)
+        (asserts! (is-valid-name name) err-invalid-input)
+        (asserts! (is-valid-description description) err-invalid-input)
+        (asserts! (is-valid-category category) err-invalid-input)
         (asserts! (<= required-assessments max-assessors) err-invalid-score)
         (asserts! (> required-assessments u0) err-invalid-input)
         
