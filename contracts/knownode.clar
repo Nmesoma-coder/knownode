@@ -15,6 +15,8 @@
 (define-constant err-already-assessed (err u104))
 (define-constant err-max-assessors-reached (err u105))
 (define-constant err-invalid-score (err u106))
+(define-constant err-invalid-skill-id (err u107))
+(define-constant err-invalid-input (err u108))
 
 ;; Data Maps
 (define-map users 
@@ -45,6 +47,24 @@
     }
 )
 
+;; Data var for skill ID counter
+(define-data-var skill-id-counter uint u0)
+
+;; Input validation functions
+(define-private (is-valid-skill-id (skill-id uint))
+    (and 
+        (>= skill-id u0)
+        (< skill-id (var-get skill-id-counter))
+    )
+)
+
+(define-private (is-valid-string (str (string-ascii 200)))
+    (and 
+        (not (is-eq str ""))
+        (<= (len str) u200)
+    )
+)
+
 ;; Public functions
 
 ;; Register a new user
@@ -65,8 +85,13 @@
 ;; Add a new skill to the platform
 (define-public (add-skill (name (string-ascii 50)) (description (string-ascii 200)) (required-assessments uint))
     (let ((skill-id (get-next-skill-id)))
+        ;; Input validation
         (asserts! (is-eq tx-sender contract-owner) err-not-authorized)
+        (asserts! (is-valid-string name) err-invalid-input)
+        (asserts! (is-valid-string description) err-invalid-input)
         (asserts! (<= required-assessments max-assessors) err-invalid-score)
+        (asserts! (> required-assessments u0) err-invalid-input)
+        
         (ok (map-set skills 
             skill-id
             {
@@ -81,7 +106,11 @@
 ;; Request skill assessment
 (define-public (request-assessment (skill-id uint))
     (let ((sender tx-sender))
+        ;; Input validation
+        (asserts! (is-valid-skill-id skill-id) err-invalid-skill-id)
         (asserts! (default-to false (get registered (map-get? users sender))) err-not-registered)
+        (asserts! (is-none (map-get? skill-assessments {skill-id: skill-id, user: sender})) err-already-assessed)
+        
         (ok (map-set skill-assessments
             {skill-id: skill-id, user: sender}
             {
@@ -102,19 +131,22 @@
         (current-assessors (get assessors assessment))
         (current-scores (get scores assessment))
         )
-        ;; Basic checks
+        ;; Input validation
+        (asserts! (is-valid-skill-id skill-id) err-invalid-skill-id)
         (asserts! (default-to false (get registered (map-get? users sender))) err-not-registered)
         (asserts! (not (is-eq sender user)) err-not-authorized)
         (asserts! (< score u101) err-invalid-score)
         (asserts! (not (is-some (index-of current-assessors sender))) err-already-assessed)
+        (asserts! (< (len current-assessors) max-assessors) err-max-assessors-reached)
         
-        ;; Check if we've reached maximum assessors
+        ;; Check if append would exceed max length before creating new lists
         (asserts! (< (len current-assessors) u20) err-max-assessors-reached)
+        (asserts! (< (len current-scores) u20) err-max-assessors-reached)
         
         ;; Create new assessors and scores lists
         (let (
-            (new-assessors (unwrap! (as-max-len? (concat current-assessors (list sender)) u20) err-max-assessors-reached))
-            (new-scores (unwrap! (as-max-len? (concat current-scores (list score)) u20) err-max-assessors-reached))
+            (new-assessors (unwrap! (as-max-len? (append current-assessors sender) u20) err-max-assessors-reached))
+            (new-scores (unwrap! (as-max-len? (append current-scores score) u20) err-max-assessors-reached))
         )
             ;; Update assessment
             (ok (map-set skill-assessments
@@ -136,8 +168,8 @@
         (scores (get scores assessment))
         (assessor-count (len (get assessors assessment)))
         )
-        
-        ;; Check if minimum assessors requirement is met
+        ;; Input validation
+        (asserts! (is-valid-skill-id skill-id) err-invalid-skill-id)
         (asserts! (>= assessor-count min-assessors) err-insufficient-assessors)
         
         ;; Calculate average score
@@ -182,8 +214,6 @@
 ;; Private functions
 
 ;; Get next skill ID (internal counter)
-(define-data-var skill-id-counter uint u0)
-
 (define-private (get-next-skill-id)
     (let ((current (var-get skill-id-counter)))
         (var-set skill-id-counter (+ current u1))
